@@ -178,7 +178,7 @@ Adology is deeply dependent upon AWS managed services for its operation, particu
 
 
 
-<img src=https://billdonner.com/adology/ark2.png width=200>
+<img src="https://billdonner.com/adology/ark2.png" width=300>
 
 ### Backend 
 
