@@ -81,7 +81,7 @@ Ads >
 AI Results > 
 Reports & Displays
  
-![spine](https://billdonner.com/adology/ark3.png)
+<img src=https://billdonner.com/adology/ark3.png width=200>
 
 #### Organization Account
 Represents a customer organization or business entity using Adology.
@@ -178,7 +178,7 @@ Adology is deeply dependent upon AWS managed services for its operation, particu
 
 
 
-![HW Pic](https://billdonner.com/adology/ark2.png)
+<img src=https://billdonner.com/adology/ark2.png width=200>
 
 ### Backend 
 
@@ -212,7 +212,7 @@ Frontend api requests run thru the load balancer to the active API Server. A Web
 
 The main flow for acquiring brand information is the most time-consuming and time-critical part of the system, and a key performance metric is to process 10,000 ads in 10 minutes.
 
-![mainflow](https://billdonner.com/adology/ark1.png)
+<img src=https://billdonner.com/adology/ark1.png width=200>
 
 To kick off processing for a brand:
 
