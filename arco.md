@@ -81,7 +81,7 @@ Ads >
 AI Results > 
 Reports & Displays
  
-![spine](ark3.png)
+![spine](images/ark3.png)
 
 #### Organization Account
 Represents a customer organization or business entity using Adology.
