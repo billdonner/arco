@@ -4,84 +4,75 @@
 
 Adology’s architecture is designed to systematically store, analyze, and generate insights from advertising data. The system must support highly structured AI-driven analysis while also maintaining efficient retrieval of brand, ad, and intelligence reports—all within a cost-effective, scalable database structure.
 
-At its core, Adology is not just a passive ad-tracking tool. Instead, it is an AI-powered intelligence engine that captures:
-- The raw reality of ad creatives (metadata, images, videos, and text),
-- The structured interpretation of these creatives (AI-generated labels, scores, and embeddings),
-- The higher-level knowledge extracted from AI insights (brand-wide trends, comparative analysis, and strategic reports).
+At its core, Adology is not just a passive ad-tracking tool. Instead, it functions as an AI-powered intelligence engine that captures:
 
-Adology's data architecture supports multiple users within customer accounts, each managing multiple _brandspaces_, where each brandspace revolves around a primary brand, tracking competitor brands and followed brands to define the scope of intelligence gathering. A user can switch brandspaces for one customer organization at any time, but will require a unique email and separate login to support multiple organizations.
+- The raw reality of ad creatives (metadata, images, videos, and text)
+- The structured interpretation of these creatives (AI-generated labels, scores, and embeddings)
+- The higher-level knowledge extracted from AI insights (brand-wide trends, comparative analysis, and strategic reports)
 
-Adology is, in most respects, a conventional, Internet-accessible database and content management service built on top of conventional data stores and access methods, including AWS, EC2, S3, SQS, Lambda, Postgres, Mongo, and Python. What makes it valuable is the intelligent, contextual analysis and notifications of the advertising-based videos and imagery stored and maintained in realtime. Newly ingested Images and videos are archived in S3 and accessed directly via S3 URLs. 
+Adology's data architecture supports multiple users within customer accounts, each managing multiple *brandspaces*. Each brandspace focuses on a primary brand, tracking competitor brands and followed brands to define the scope of intelligence gathering. A user can switch brandspaces for one customer organization at any time but requires a unique email and separate login to support multiple organizations.
 
-The APIs used by client programs, including both UX and background programs, support a Contextual Data Model that offers a variety of convenient features and returns filtered ,  transformed and AI-enhanced slices of the database. Clients see all these REST APIs at [https://adology.ai/live/…](https://adology.ai/live/…)
+Adology largely operates as a conventional, Internet-accessible database and content management service built on top of well-known data stores and access methods, including AWS, EC2, S3, SQS, Lambda, Postgres, Mongo, and Python. Its key value lies in intelligent, contextual analysis and notifications for advertising-based videos and imagery stored and maintained in real time. Newly ingested images and videos are archived in S3 and accessed directly via S3 URLs.
 
-The data stores (S3, Postgres, Mongo) that support the Adology Contextual Data Model are filled by Acquisition Engines, which are EC2 or dynamically launched Lambda functions that pull data from remote sources, including specifically: Facebook, SerpApi, and  customer-specific sources and databases.
+The APIs used by client programs (UX or background) support a Contextual Data Model that offers various convenient features and returns filtered, transformed, and AI-enhanced slices of the database. These REST APIs are documented at [https://adology.ai/live/…](https://adology.ai/live/…).
 
-Most of the data is shared by all customers such as brands and advertising data including images and video, but some of it is private to each customer including _brandspaces_
+The data stores (S3, Postgres, Mongo) that power the Adology Contextual Data Model are filled by Acquisition Engines, which are EC2 or dynamically launched Lambda functions that pull data from remote sources, including Facebook, SerpApi, and customer-specific databases.
 
-Different non-UI components are runnable as either EC2 or Lambda functions and are connected through a series of SQS queues. The SQS queues and Lambdas support parallelization of workflows for maximum concurrency.
+Most of the data, such as brands and advertising assets, is shared by all customers, whereas brandspaces are private to each customer.
 
+Different non-UI components run on either EC2 or Lambda functions and are connected through a series of SQS queues. The SQS queues and Lambdas support parallelization of workflows for maximum concurrency.
 
-
+---
 
 ## Central Data Spine
 
+The primary table in the central spine is the **Brand Descriptions Table**. There are two types of entries:
 
+- **Analyzed Brands**: These brands are requested by customers and are fully analyzed by Adology’s AI Engines.
+- **Tracked Brands**: These brands are generally specified by Adology and are downloaded and stored in S3, but are not analyzed until a customer requests it.
 
-The primary table in the central spine is the Brand Descriptions Table. There are two types of entries:
+When a customer requests information about a brand, all videos and images previously captured by Adology become available, along with any new assets. The collection is then made accessible to the Analysis AI Engines.
 
-- Brands We Are Analyzing: These brands are requested by our customers. The are fully analyzed by Adology's AI Engines.
+### Ad Descriptions/Attributes
 
-- Brands We Are Tracking: These brands are generally specified by Adology and will be downloaded and stored in S3. They are not analyzed until  request by a customer.
+These are natural language, open-ended text attributes mapped to an ad through AI processing. There are over 50 attributes for which the system generates descriptions. They are all open-ended and used for:
 
-When a customer requests information about a brand, all videos and images previously captured by Adology are made available, along with any newer assets, and then the collection is made available  to the Analysis AI Engines.
+- Text summaries throughout the application
+- INSIGHT text summaries and chatbot (INQUIRE)
+- Inputs for trend detection
 
-#### Ad Descriptions/Attributes
+### Detailed/Long Descriptions
 
-The natural language, open-ended text attributes that are mapped to an ad by AI processing. There are 50+ attributes for which we generate descriptions. They are all open ended.
-- Used to power text summaries across the app.
-- Currently used for INSIGHT text summaries and INQUIRE/chatbot.
-- They are also used as inputs for trend detection.
+A single field is stored for each ad: a 500-word (max) description that captures comprehensive details.
 
-#### Detailed/Long Descriptions
+**Labels:** Close-ended, finite, hardcoded labels applied to each ad based on predefined taxonomies. Two label sets are supported: UNIVERSAL and TREND labels. Labels are used to:
 
-A single field we gather: a 500-word description of an ad.
+- Power graphs and charts
+- Drive functionality in modules such as INSIGHT and TRACK
+- Serve as inputs for trend detection
 
-**Labels:** The close-ended, finite, hardcoded labels that we apply to each ad, based on predefined taxonomies. We have two label sets: UNIVERSAL and TREND labels.
-- Used to power graphs and charts across the app.
-- Currently used in INSIGHT, but will also be key in modules like TRACK.
-- They are also used as inputs for trend detection.
+### Embeddings
 
-#### Embeddings
+Embeddings are numerical representations of creatives or text. Multiple types of embeddings are maintained:
 
-Embeddeings are numerical representations of the creative or of text.
+- **Text embeddings** of detailed descriptions, used to map images to insights in INSIGHT. This is done by aligning the embedding of INSIGHT text with detailed description embeddings to find the most relevant ad.
+- **Visual embeddings** of ads, used for trend detection.
+- Text embeddings of detailed descriptions are also used by the chatbot to retrieve relevant information.
 
-We have text embeddings of detailed descriptions, which we use to map images to insights in INSIGHT. 
- 
-We have visual embeddings of the ads themselves, which we use for trend detection.
-
-- We use text embeddings of detailed descriptions to map images to insights in INSIGHT. We do this by mapping the embedding of the INSIGHT text to the detailed description embeddings to find the ad that most closely matches the insight.
-- We don’t actually analyze ads or visual embeddings here.
-- We use text embeddings of the detailed description to enable the chatbot to retrieve the right information.
+---
 
 ## Adology Intelligent Data Storage
 
-Adology is not just a database but an intelligence engine. Storage decisions must be made with retrieval efficiency & AI processing costs in mind.
+Adology is designed not just as a database but as an intelligence engine. Storage decisions must balance retrieval efficiency with AI processing costs.
 
 ### Data Hierarchy
 
-The Adology Data Store is organized in a hierarchy of logical data stores that are continuously updated by the Adology Service Infrastructure
+The Adology Data Store is organized in a hierarchy of logical data stores that are continuously updated by the Adology Service Infrastructure:
 
-Organization Account > 
-Brandspace > 
-Tracked Brand Intelligence (1 primary, multiple competitor and followers) > 
-Channels > 
-Brands > 
-Ads > 
-AI Results > 
-Reports & Displays
  
-<img src=https://billdonner.com/adology/ark3.png width=200>
+<img src=https://billdonner.com/adology/four.png width=400>
+ 
+<img src=https://billdonner.com/adology/three.png width=400>
 
 #### Organization Account
 Represents a customer organization or business entity using Adology.
@@ -102,72 +93,57 @@ This level ensures customized tracking and insights for each brand strategy.
 #### Shared Ads Data Store
 - Ads from all sources are accumulated permenently in S3, All Ads Data is shared amongst all Adology users
 
-#### Ad-Level Intelligence (The Building Blocks of AI-Driven Insights)
+## AI Summarization & Brand-Level Insights
 
-1. Ad metadata is captured first (e.g., raw text, CTA, platform, status, Image/Video URL).
-1. AI extracts structured attributes, generating:
-- Raw Ad Descriptions → Text-based analysis of ad messaging.
-- AI Labels & Scores → Categorical attributes applied by AI.
-1. Embeddings → AI-generated vector representations of ad visuals & text to power semantic search & similarity analysis.
-1. Ad-Level AI Data (per individual ad):
- - Raw Descriptions → AI-generated explanations of what the ad conveys.
-- Labels & Scores → AI-assigned attributes (e.g., "Product Demo," "Emotional Appeal: Inspiration").
-- Embeddings → AI-generated vectorized representations of text & images (used for similarity search).
+Once enough ad descriptions exist, they are aggregated into brand-wide insights. AI generates high-level summaries of key brand themes, messaging patterns, and performance insights, ensuring they remain up-to-date as new ads are processed.
 
+### **Brand-Level AI Data (Aggregated from Ad-Level AI Data)**
+- **Theme Clusters** → Groups of ads that share common storytelling techniques.
+- **Attribute Summaries** → AI-generated analysis of features, claims, and offers.
+- **Messaging Trends** → AI-detected patterns in claims, benefits, and CTA effectiveness.
 
-#### AI Summarization & Brand-Level Insights
-Once enough ad descriptions exist, they are aggregated into brand-wide insights.AI creates high-level descriptions summarizing key brand themes, messaging patterns, and performance insights.Insights remain up-to-date as new ads are processed.
+---
 
-Brand-Level AI Data (aggregated from ad-level AI data):
-- Theme Clusters → Groups of ads that share common storytelling techniques.
-- Attribute Summaries (Features, Claims, Offers) → AI-generated analysis of how 
-- Messaging Trends → AI-detected patterns in claims, benefits, and CTA effectiveness.
+## Reports & Competitive Analysis
 
-#### Reports & Competitive Analysis
-Reports are generated by & displayed in modules like Inspire Recs & Trends, Market Intelligence/Brand Details.
-AI generated Reports are pre-generated at the end of the acquire process, based on Competitor & Follower Lists, for customer-facing insights (to reduce API costs).
-These reports synthesize AI-generated insights from both ad-level and brand-level data. (#’s 5 & 6 in this list)
-Includes competitive benchmarking, creative trends, and strategic recommendations.
-EXAMPLE: Generating Ad Recommendations in INSPIRE
-Software pulls the Ad & Brand Level AI data, for the Competitor & Follower listed Brands.
-Runs Ad Recommendation Prompt
-Saves Ad Recommendations, displays in INSPIRE REC module
-We update these when 2 of the following happen:
-User comes in and adds/removes a new follower/competitor brand
-We see a new ad come in from a follower/competitor brand
-Logic may be slightly more advanced: When 7 days have elapsed AND new ads have come in.
+Reports are generated and displayed in modules such as **Inspire Recs & Trends** and **Market Intelligence/Brand Details**. These reports synthesize AI-generated insights from both ad-level and brand-level data to provide customer-facing insights while reducing API costs.
 
+### **Report Generation Process**
+1. AI pre-generates reports at the end of the acquisition process based on competitor & follower lists.
+2. Reports include competitive benchmarking, creative trends, and strategic recommendations.
+3. **Example: Generating Ad Recommendations in INSPIRE**
+   - System pulls AI-generated ad & brand-level data for competitor & follower brands.
+   - Runs an Ad Recommendation prompt.
+   - Saves and displays recommendations in the **INSPIRE REC** module.
 
-Reports serve as snapshots of key insights that don’t need to be recalculated in real-time, ensuring cost efficiency.
-Reports are generated based on the competitor & followed brand lists. INSPIRE RECS/TRENDS, BRAND DETAILS/MARKET INTELLIGENCE
-Stored insights include:
-Ad Theme Comparisons (e.g., “Nike focuses on speed, while Adidas emphasizes lifestyle.”)
-Messaging Effectiveness Reports (e.g., “Top 3 CTAs in the running shoe market.”)
-Trend Tracking (e.g., “Limited-time offers are increasing in Meta ads.”)
-Since reports are prebuilt, they are only updated intermittently—not every time a user loads the app.
+Reports update when **two** of the following occur:
+- A user adds/removes a follower or competitor brand.
+- A new ad arrives from a followed or competitor brand.
+- Additional logic: If **7 days have elapsed AND** new ads have been received.
 
+### **Stored Insights**
+Reports act as snapshots of key insights, optimizing cost efficiency by avoiding real-time recalculations. They include:
+- **Ad Theme Comparisons** (e.g., *"Nike focuses on speed, while Adidas emphasizes lifestyle."*)
+- **Messaging Effectiveness Reports** (e.g., *"Top 3 CTAs in the running shoe market."*)
+- **Trend Tracking** (e.g., *"Limited-time offers are increasing in Meta ads."*)
 
+---
 
-### Optimizations
+## Brand Pipeline Optimizations
 
-#### Ad AI Data is Stored in Per-Ad Documents
-- Ad descriptions, labels, and embeddings are saved per ad.
-- Allows fast retrieval of ad-level insights.
+### **Efficient Data Storage**
+- **Per-Ad Storage** → Ad descriptions, labels, and embeddings are saved per ad for fast retrieval.
+- **Incremental Brand-Level Updates** → Brand-wide insights update only when necessary, reducing redundant computation.
 
-#### Brand AI Data is Stored Separately & Updated Incrementally
-- Brand-wide insights must be refreshed as new ads arrive—but only when necessary.
-- Prevents unnecessary recomputation.
+### **Caching & Performance Enhancements**
+- **Pre-built Reports & Dashboards** →
+  - Reduces OpenAI API calls and improves performance.
+  - Dashboard analytics are stored separately for fast loading times.
+  - Reports are driven by the **Competitor & Follower List**.
 
-#### Reports & Dashboards are Cached
-- Pre-built reports reduce OpenAI API calls.
-- Dashboard analytics are stored separately for fast loading times.
-- Reports driven by which Brands are on Competitor & Follower List
-
-#### Brandspaces Dictate Intelligence Scope
-- Brandspaces are stored at an organizational level
-- An organizations totality of Brandspaces determine which brands & competitors get tracked.
-- Ensures the app remains focused on the user’s needs.
-
+### **Brandspaces Define Intelligence Scope**
+- **Brandspaces are managed at an organizational level** → Determines which brands & competitors are tracked.
+- **Organizational Brandspaces** → Ensure intelligence remains focused on the user’s needs.
 
 
 ## Operating Environment
@@ -178,7 +154,7 @@ Adology is deeply dependent upon AWS managed services for its operation, particu
 
 
 
-<img src="https://billdonner.com/adology/ark2.png" width=300>
+<img src="https://billdonner.com/adology/two.png" width=400>
 
 ### Backend 
 
@@ -212,7 +188,7 @@ Frontend api requests run thru the load balancer to the active API Server. A Web
 
 The main flow for acquiring brand information is the most time-consuming and time-critical part of the system, and a key performance metric is to process 10,000 ads in 10 minutes.
 
-<img src=https://billdonner.com/adology/ark1.png width=200>
+<img src=https://billdonner.com/adology/one.png width400>
 
 To kick off processing for a brand:
 
@@ -277,23 +253,7 @@ Each of the brands in the database is periodically updated by a periodic CRON jo
 - **External API Integration**
   - Add input validation and robust error handling around external API calls.
   - Use retries and fallback strategies to handle transient API failures.
-### Understanding Key AWS Components
 
-For readers who are less familiar with AWS, here's a brief overview of the key services mentioned:
-
-- **Amazon EC2 (Elastic Compute Cloud):**  
-  EC2 provides scalable computing capacity in the cloud. It allows you to run virtual servers (instances) on-demand without needing to invest in hardware. This service is ideal when you need full control over the server environment or when running long-running, stateful applications.  
-  [Learn more about EC2](https://docs.aws.amazon.com/ec2/).
-
-- **Amazon S3 (Simple Storage Service):**  
-  S3 is a highly scalable object storage service designed to store and retrieve any amount of data at any time. It is commonly used for storing files, backups, and media assets like images and videos.  
-  [Learn more about S3](https://docs.aws.amazon.com/s3/).
-
-- **Amazon SQS (Simple Queue Service):**  
-  SQS is a managed message queuing service that enables the decoupling of components in a distributed system. It reliably transmits messages between different parts of your application, making it especially useful for scaling and parallel processing.  
-  [Learn more about SQS](https://docs.aws.amazon.com/sqs/).
-
----
 
 ### Best Practices for Writing Functions for Parallel Execution
 
