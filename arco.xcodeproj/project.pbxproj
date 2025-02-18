@@ -10,20 +10,11 @@
 		88726AF32D628C1B00CA62BD /* arco.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = arco.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
-/* Begin PBXFileSystemSynchronizedRootGroup section */
-		88726AF42D628D6300CA62BD /* images */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = images;
-			sourceTree = "<group>";
-		};
-/* End PBXFileSystemSynchronizedRootGroup section */
-
 /* Begin PBXGroup section */
 		88726AEC2D628C1100CA62BD = {
 			isa = PBXGroup;
 			children = (
 				88726AF32D628C1B00CA62BD /* arco.md */,
-				88726AF42D628D6300CA62BD /* images */,
 			);
 			sourceTree = "<group>";
 		};

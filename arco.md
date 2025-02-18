@@ -1,14 +1,17 @@
-# Adology Architecture
+# Adology Architecture v0.7
 
 ## Overview
 
-Adology’s architecture is designed to systematically store, analyze, and generate insights from advertising data. The system must support highly structured AI-driven analysis while also maintaining efficient retrieval of brand, ad, and intelligence reports—all within a cost-effective, scalable database structure.
+Adology is a intelligent service that analyzes digital advertising by applying knowledge processing to evaluate content(video, image, and text) as it is ingested into a permanent Adology repository.
 
 At its core, Adology is not just a passive ad-tracking tool. Instead, it functions as an AI-powered intelligence engine that captures:
 
 - The raw reality of ad creatives (metadata, images, videos, and text)
 - The structured interpretation of these creatives (AI-generated labels, scores, and embeddings)
 - The higher-level knowledge extracted from AI insights (brand-wide trends, comparative analysis, and strategic reports)
+
+Adology’s architecture is designed to systematically store, analyze, and generate insights from advertising data. The system must support highly structured AI-driven analysis while also maintaining efficient retrieval of brand, ad, and intelligence reports—all within a cost-effective, scalable database structure.
+
 
 Adology's data architecture supports multiple users within customer accounts, each managing multiple *brandspaces*. Each brandspace focuses on a primary brand, tracking competitor brands and followed brands to define the scope of intelligence gathering. A user can switch brandspaces for one customer organization at any time but requires a unique email and separate login to support multiple organizations.
 
@@ -27,7 +30,7 @@ Different non-UI components run on either EC2 or Lambda functions and are connec
 
 Adology strives for near-continuous availability of its computing infrastructure, with each component able to fail independently and be restored within minutes. It is heavily dependent on AWS-managed services (MongoDB Atlas, Postgres RDS, SQS, AWS Load Balancer, AWS CloudFront).
 
-<img src="https://billdonner.com/adology/two.png" width=400>
+<img src="https://billdonner.com/adology/two.png" width=700>
 
 ### Backend
 
@@ -55,136 +58,174 @@ Several Front End modules (Inquire, Enrich, AdSpend Reporting)follow this same p
 - make an API call to receive the results that are now in the database
 
 
-## Central Data Spine
+# **Central Data Spine**
 
-The primary table in the central spine is the **Brand Descriptions Table**. There are two types of entries:
+The **Brand Descriptions Table** serves as the primary table in the central data spine. It contains two categories of brand entries:
 
-- **Analyzed Brands**: These brands are requested by customers and are fully analyzed by Adology’s AI Engines.
-- **Tracked Brands**: These brands are generally specified by Adology and are downloaded and stored in S3, but are not analyzed until a customer requests it.
+- **Analyzed Brands**: These brands are explicitly requested by customers and undergo full AI-driven analysis within Adology's processing engine.
+- **Tracked Brands**: These brands are selected by Adology for tracking purposes. They are stored in S3 but remain unanalyzed until explicitly requested by a customer. The AI processing, which is expensive, is explicitly deferred until a customer changes its status to "analyzed"
 
-When a customer requests information about a brand, all videos and images previously captured by Adology become available, along with any new assets. The collection is then made accessible to the Analysis AI Engines.
+The analysis of ads is a complex and time-consuming process and requires careful coordination to ensure a pleasant user experience.
 
-#### Ad Descriptions/Attributes
+These are the fundamental data components that are tracked  by the Spine:
 
-These are natural language, open-ended text attributes mapped to an ad through AI processing. There are over 50 attributes for which the system generates descriptions. They are all open-ended and used for:
+## **Ad Descriptions and Attributes**
 
-- Text summaries throughout the application
-- INSIGHT text summaries and chatbot (INQUIRE)
-- Inputs for trend detection
+Natural language attributes are mapped to each ad through AI processing. Over 50 attributes are generated, all of which serve key functions, including:
 
-#### Detailed/Long Descriptions
+- Providing text summaries across the application.
+- Powering **INSIGHT** text summaries and chatbot functionality (**INQUIRE**).
+- Acting as inputs for **trend detection**.
 
-A single field is stored for each ad: a 500-word (max) description that captures comprehensive details.
+### **Detailed Ad Descriptions**
 
-**Labels:** Close-ended, finite, hardcoded labels applied to each ad based on predefined taxonomies. Two label sets are supported: UNIVERSAL and TREND labels. Labels are used to:
+A single **500-word (max) description** is stored for each ad, providing a comprehensive textual summary. This is the primary field that is analyzed by many AI prompts.
 
-- Power graphs and charts
-- Drive functionality in modules such as INSIGHT and TRACK
-- Serve as inputs for trend detection
+### **Labels**
 
-#### Embeddings
+Close-ended, predefined labels are applied to ads using **UNIVERSAL** and **TREND** label taxonomies. Labels are used for:
 
-Embeddings are numerical representations of creatives or text. Multiple types of embeddings are maintained:
+- Enabling structured insights in graphs and charts.
+- Powering features within modules such as **INSIGHT** and **TRACK**.
+- Supporting **trend detection** models.
 
-- **Text embeddings** of detailed descriptions, used to map images to insights in INSIGHT. This is done by aligning the embedding of INSIGHT text with detailed description embeddings to find the most relevant ad.
-- **Visual embeddings** of ads, used for trend detection.
-- Text embeddings of detailed descriptions are also used by the chatbot to retrieve relevant information.
+### **Embeddings**
 
-## Spine Operations
+Embeddings provide numerical representations of ad creatives or text content. Multiple types of embeddings are stored:
 
-Keeping the spine up to date is primarily driven by the Brand Record in the Brand Data Table.
+- **Text embeddings** of detailed descriptions, used for mapping images to insights within **INSIGHT**.
+- **Visual embeddings** of ads, leveraged for **trend detection**.
+- **Chatbot retrieval embeddings**, ensuring accurate information retrieval based on user queries.
 
+   
+
+# **Spine Operations**
+
+
+The **Brand Descriptions Table** drives all operations within the central spine.
+
+<img src="https://billdonner.com/adology/three.png" width=700>
+
+Adology continuously updates the spine through a **background process (SpineScheduler)**, which sequentially scans the entire table of brands and places messages onto a **low-priority Acquire SQS Queue**. This triggers **Lambda functions** that update brands flagged for updates. In cases where brands source data from multiple locations, multiple Acquire-like SQS queues distribute processing across different Lambda functions.
+
+To optimize response times, **Adology administrators pre-load popular and commonly accessed brands** into the system, ensuring their data is readily available before a request occurs. However, if a user requests a brand that has never been analyzed, the system follows the same general process but prioritizes the request using **high-priority SQS queues**.
+
+### **Acquisition and Processing Flow**
+
+1. At a high level, adology triggers **one of a set of SQS queues** to **download** content from brand-specific external sources into S3.
+2. **Lambda functions** determine the acquisition strategy for each brand.
+3. **Streaming-based ingestion** maximizes concurrency by eliminating a discrete upload step.
+4. **AI-based content analysis** is performed using OpenAI API calls, which must be executed sequentially due to content dependencies.
  
-<img src=https://billdonner.com/adology/three.png width=800>
 
-Adology attempts to keep the spine as up to date as possible. As such there is a background process (SpineScheduler) which  periodically runs thru the entire table of brands sequentially and places messages on the low-priority Aquire SQS Q to trigger Lambda functions to update those brands needing an update. Some brands will be multi-sourced. In this case messages will be placed on multiple Acquire-like SQS QUeues to trigger different Lambdas for different processing.
+# **Adology Intelligent Data Storage**
 
-Adology administrators will pre-load popular and common brands so that they are already cached before anyone asks for them, but nevertheless there will be situations where a user at a dashboard requests a brand that has never been seen. In this case the general flow is the same but it is performed on a different set of higher-priority SQS Queues.
+Adology is **more than a database**—it is an **intelligent processing engine**. Data storage is optimized for **fast retrieval** while balancing **AI processing costs**.
 
-In either case the Lambdas end up determining how to Acquire the content and then pass the flow to another set of SQS Queues to activate different Lambdas to  Download content from the remote sources and store in S3. The step can be done thru streaming so that there is no discrete upload step thus providing maximum concurrency with.
+## **Data Hierarchy**
 
-Finally, in all cases there is considerable AI Intelligence applied to the newly downloaded content. This involves potentially many separate calls from Lambdas into the OpenAI API, which must be sequenced due to content dependecies.
+Adology maintains a structured hierarchy of logical data stores, continuously updated by the **Adology Service Infrastructure**.
 
-
-
----
-
-## Adology Intelligent Data Storage
-
-Adology is designed not just as a database but as an intelligence engine. Storage decisions must balance retrieval efficiency with AI processing costs.
-
-### Data Hierarchy
-
-The Adology Data Store is organized in a hierarchy of logical data stores that are continuously updated by the Adology Service Infrastructure:
-
- 
-<img src=https://billdonner.com/adology/four.png width=800>
- 
+<img src="https://billdonner.com/adology/four.png" width=700>
 
 1. **Organization Account**
-   Represents a customer organization or business entity using Adology. Manages multiple brand-focused workspaces (brandspaces).
+   Represents a customer entity that manages multiple brandspaces.
 
 2. **Brandspaces**
-   Each user is connected to at least one brandspace and can switch brandspaces as needed. A brandspace is centered around a primary brand and includes competitor & followed brands, defining the scope of analysis.
+   Each user is connected to at least one **brandspace**, which is centered on a **primary brand** and includes competitors and followed brands. Brandspaces define the **scope of analysis**.
 
 3. **Brand-Level Intelligence**
-   Includes brand metadata (logos, category, website) and AI-generated brand descriptions/trends. Each brand can connect to multiple channels (e.g., Meta, SERP, YouTube).
+   Includes:
+   - Brand metadata (logos, categories, websites).
+   - AI-generated **brand descriptions and trends**.
+   - Connections to multiple data sources (**Meta, SERP, YouTube**).
 
 4. **Channel-Level Tracking**
-   Each brand runs ads across multiple channels. Ads are categorized by their originating channel.
+   Each brand runs ads across multiple channels. Ads are categorized based on **originating platform**.
 
 5. **Shared Brand Data Store**
-   Brand data from all sources is stored in S3 and shared across all Adology users.
+   - Stores **brand metadata** from all sources in **S3**.
+   - Data is shared across **all Adology users**.
 
 6. **Shared Ads Data Store**
-   Ads from all sources are associated with a brand and accumulated permanently in S3, with data shared across all Adology users.
+   - Ads are permanently stored in **S3**, categorized by brand.
+   - Data is available to **all Adology users**.
 
----
+   
 
-## AI Summarization & Brand-Level Insights
+## **AI Summarization & Brand-Level Insights**
 
-When sufficient ad descriptions are available, they are aggregated into brand-wide insights. AI generates high-level summaries of key brand themes, messaging patterns, and performance insights, which remain up-to-date as new ads are processed.
+Once sufficient ad descriptions have been processed, Adology aggregates them into **brand-wide insights**. The AI continuously updates **high-level brand themes, messaging patterns, and performance insights**.
 
-### Brand-Level AI Data (Aggregated from Ad-Level AI Data)
+### **Brand-Level AI Data (Aggregated from Ad-Level Data)**
+- **Theme Clusters** → Identifies groups of ads sharing **common storytelling techniques**.
+- **Attribute Summaries** → AI-generated analysis of **features, claims, and offers**.
+- **Messaging Trends** → Detects evolving patterns in **claims, benefits, and call-to-action (CTA) effectiveness**.
+ 
 
-- **Theme Clusters**: Groups of ads sharing common storytelling techniques
-- **Attribute Summaries**: AI-generated analysis of features, claims, and offers
-- **Messaging Trends**: AI-detected patterns in claims, benefits, and CTA effectiveness
+### **Reports & Competitive Analysis**
 
----
+Adology generates **competitive reports** that synthesize **ad-level and brand-level AI insights**. These reports are integrated into **Inspire Recs & Trends** and **Market Intelligence/Brand Details** modules.
 
-## Reports & Competitive Analysis
+#### **Report Generation Process**
+1. **AI pre-generates reports** at the conclusion of the data acquisition process.
+2. Reports provide:
+   - **Competitive benchmarking**.
+   - **Creative trends analysis**.
+   - **Strategic recommendations**.
 
-Reports are generated and displayed in modules such as **Inspire Recs & Trends** and **Market Intelligence/Brand Details**. These reports synthesize AI-generated insights from ad-level and brand-level data to provide client-facing information while reducing API costs.
+3. **Example: Generating Ad Recommendations in INSPIRE**
+   - **Data Acquisition** → AI pulls brand and competitor data.
+   - **Ad Recommendation Prompt** → AI evaluates trends and ad effectiveness.
+   - **Final Output** → Recommendations are displayed in **INSPIRE REC**.
 
-### Report Generation Process
+#### **Report Updates**
+Reports refresh **when two of the following conditions are met**:
 
-1. AI pre-generates reports at the end of the data acquisition process, based on competitor & follower lists.
-2. Reports include competitive benchmarking, creative trends, and strategic recommendations.
-3. **Example (Generating Ad Recommendations in INSPIRE):**
-   - The system pulls AI-generated ad & brand-level data for competitor & follower brands.
-   - An Ad Recommendation prompt is executed.
-   - Results are saved and displayed in the **INSPIRE REC** module.
+- A **follower or competitor brand** is **added or removed**.
+- A **new ad** arrives from a **followed** or **competitor brand**.
+- Additional logic: **If seven days have elapsed AND new ads have been received**.
 
-### Report Updates
+### **Stored Insights**
+Reports act as **snapshots** of AI-generated insights, **reducing API processing costs** while preserving **data accuracy**.
 
-Reports are refreshed when two of the following occur:
+**Examples of insights stored in reports:**
+- **Ad Theme Comparisons** → *Nike emphasizes speed; Adidas focuses on lifestyle*.
+- **Messaging Effectiveness Reports** → *Top 3 most successful CTAs in the running shoe industry*.
+- **Trend Tracking** → *Increase in limited-time offers in Meta ads*.
+ 
+### **Enhancements & Improvements**
+To ensure maximum system performance, Adology employs:
 
-- A follower or competitor brand is added/removed.
-- A new ad arrives from a followed or competitor brand.
-- Additional logic: If seven days have elapsed **and** new ads have been received.
+- **Pre-built AI dashboards** → Minimize OpenAI API calls for efficiency.
+- **Cached Reports & Insights** → Ensures fast retrieval for users.
+- **Parallelized AI Processing Pipelines** → Optimizes query execution across distributed systems.
 
-### Stored Insights
+ 
+The **central data spine, intelligent data storage, and AI-powered insights** collectively power Adology’s **brand intelligence engine**. The system continuously refines and updates its models to **deliver actionable, high-quality marketing analytics** while **minimizing processing overhead**.
 
-Reports act as snapshots of key insights, optimizing cost efficiency by avoiding real-time recalculations. Examples include:
 
-- **Ad Theme Comparisons** (e.g., *"Nike focuses on speed, while Adidas emphasizes lifestyle."*)
-- **Messaging Effectiveness Reports** (e.g., *"Top 3 CTAs in the running shoe market."*)
-- **Trend Tracking** (e.g., *"Limited-time offers are increasing in Meta ads."*)
+### Data Processing Pipeline
 
----
+The pipeline extracts raw data, harmonizes entries (with GPT), categorizes them, counts occurrences, and generates summaries. Both initial processing and incremental updates are supported.
 
-## Brand Pipeline Optimizations
+1. **Raw Extraction**
+   - Pull raw creative attributes from ad descriptions.
+   - Store ad-level data with timestamps.
+
+2. **Unique Attribute Extraction & Harmonization**
+   - **Initial Run**: Gather all raw entries for an attribute (e.g., Features). Use GPT or NLP to harmonize synonyms and create a unified list of unique features plus categories. Store them in the Brand Descriptions Table.
+   - **Incremental Updates**: Process only new ads. Check for any new features (or other attributes), expand lists, and regenerate categories and summaries as needed.
+
+3. **Counting & Summaries**
+   - Calculate how many ads match each unique feature or category.
+   - Generate GPT-based summaries explaining how a brand leverages its features, claims, offers, etc.
+
+
+The same pipeline is repeated for competitor or follower brands. Each competitor may have a separate Brand Descriptions Table entry. Comparisons against the primary brand are handled in downstream modules.
+
+
+###  Brand Pipeline Optimizations
 
 1. **Efficient Data Storage**
    - **Per-Ad Storage**: Ad descriptions, labels, and embeddings are stored per ad.
@@ -201,9 +242,9 @@ Reports act as snapshots of key insights, optimizing cost efficiency by avoiding
 
 
 
----
+   
 
-## The Main Acquisition Flow
+## The Main Acquisition Flow Example
 
 A key performance metric is to process 10,000 ads in under 10 minutes. The overall process is:
 
@@ -218,51 +259,47 @@ A key performance metric is to process 10,000 ads in under 10 minutes. The overa
 
 Adology’s dashboard accesses S3 directly and only writes to the database through the Adology API.
 
----
+   
 
 ## Other Flows
 
 Most UX functionality involves responding to user actions by calling an Adology API endpoint. Additional recurring processes (e.g., periodic CRON jobs) place messages on the Apify or SerpApi SQS queues to keep brand data updated.
 
----
+   
 
 ## Appendices
 
-### Common Themes & General Recommendations Across All Modules
+### Project Requirements
+
+- **JSON, not CSV**
+  Data should preferrably stored in database fields or as JSON blobs, and never as CSV. JSON is more expressive. CSV can be generated at the last moment when an API call must deliver an explicit CSV object.
+  
+  - **SQS First**
+  Lambda expressions should not be invoked directly from application software. Instead, a message with a custom payload should be placed on a FIFO SQS queue which will in turn trigger one of a group of lambas to handle the message,.
+   
 
 - **Coding Standards & Documentation**
-  - A consistent code style (PEP8) is recommended, enforced by linters (e.g., flake8, Black).
-  - Comprehensive docstrings and inline comments should be included for clarity and maintainability.
+   A consistent code style (PEP8) is recommended, enforced by linters (e.g., flake8, Black).
+   Comprehensive docstrings and inline comments should be included for clarity and maintainability.
 
 - **Centralized Configuration & Secrets Management**
-  - All hardcoded values (API keys, model names, S3 bucket names) should be externalized in configuration files or environment variables.
-  - A secure secrets management solution (e.g., AWS Secrets Manager) is advised.
+  All hardcoded values (API keys, model names, S3 bucket names) should be externalized in configuration files or environment variables.
+ 
 
 - **Structured Logging & Monitoring**
-  - Print statements should be replaced with a structured logging framework that includes contextual data (user IDs, request IDs, timestamps).
-  - Centralized logging and monitoring systems (e.g., ELK, CloudWatch) improve production observability.
+ Print statements should be replaced with a structured logging framework that includes contextual data (user IDs, request IDs, timestamps).  CloudWatch logging and monitoring systems will report exceptional events to Adology operions
 
 - **Error Handling & Retry Logic**
-  - Specific exception handling (e.g., JSONDecodeError, KeyError) should be used instead of broad `except` blocks.
-  - Standardized retry mechanisms (e.g., the tenacity library) are recommended for transient errors in external API/S3 interactions.
+  Specific exception handling (e.g., JSONDecodeError, KeyError) should be used instead of broad `except` blocks.
+  Standardized retry mechanisms (e.g., the tenacity library) are recommended for transient errors in external API/S3 interactions.
 
 - **Separation of Concerns & Modularity**
-  - Code should be refactored to separate business logic from I/O operations (database, S3, external APIs).
-  - Duplicated logic can be consolidated into shared modules and utilities.
+ Code should be refactored to separate business logic from I/O operations (database, S3, external APIs).
+ Duplicated logic can be consolidated into shared modules and utilities.
 
 - **Concurrency & Asynchronous I/O**
-  - Thread pool sizes should be reevaluated, and asynchronous I/O (e.g., asyncio, aiohttp) considered for network-bound tasks.
-  - Proper thread safety is necessary when sharing resources.
+ Thread pool sizes should be evaluated. There is a two level concurrency scheme - first the lambdas provide fanout and secondly the internal python concurrent worker threads provide the opportunity to tune concurrency.  Proper thread safety is necessary when sharing resources.
 
-- **Testing & CI/CD**
-  - Test coverage should be expanded with unit, integration, and end-to-end tests.
-  - Static analysis, security scans, and dependency checks should be integrated into the CI/CD pipeline.
-
-- **External API Integration**
-  - Input validation and robust error handling around external API calls are crucial.
-  - Retries and fallback strategies handle transient API failures effectively.
-
----
 
 ### Best Practices for Writing Functions for Parallel Execution
 
@@ -281,124 +318,6 @@ Most UX functionality involves responding to user actions by calling an Adology 
 - **Testing**
   Functions should be tested in isolation and within the parallel execution framework to ensure correct behavior in concurrent scenarios.
 
----
+# Database
 
-### Amazon SQS
-
-Amazon SQS (Simple Queue Service) is a fully managed message queuing service designed to decouple and scale distributed systems, microservices, and serverless applications:
-
-- **Fully Managed**: No server provisioning or failover configuration is required.
-- **Scalability & Performance**: SQS automatically scales to handle extremely high message throughput.
-- **Reliability & Availability**: Internal replication ensures message durability.
-
----
-
-## Brand Descriptions Table Specification
-
-### Overview
-
-This section describes the design and processing steps for building a **Brand Descriptions Table**. The table summarizes each brand’s creative attributes (features, claims, benefits, offers, key messages, etc.) and supports downstream modules like Brand Details and Inspire. It is a key component of the Central Data Spine.
-
-#### Primary User Personas
-
-- **Backend Functions**: Data processing, analytics, and integration with downstream modules.
-
-#### Jobs to Be Done
-
-- **Summarize Brand Attributes**: Provide a cohesive view of features, claims, benefits, etc.
-- **Support Downstream Modules**: Supply standardized data for Brand Details, Inspire, and Ad Spend Reporting.
-- **Ensure Consistent Data Representation**: Harmonize attribute values across both primary and competitor brands.
-
----
-
-### Context and Functional Requirements
-
-**Purpose & Approach**
-- One row per unique brand item.
-- Each attribute is derived from source fields in the ad description:
-  - `features` → **Features**
-  - `benefits` → **Benefits**
-  - `claims` → **Claims**
-  - `offers` → **Offers**
-  - `Long Description` → **Themes**
-  - `key message` → **Key Messages**
-
-#### Key Attributes
-
-**MVP**
-- Features, Benefits, Claims, Offers, Key Messages
-
-**V2**
-- Visual Styles, Emotions, Category Entry Points
-
-Each attribute may include a list of unique items, corresponding categories, and aggregated counts or summaries.
-
----
-
-### Data Processing Pipeline
-
-The pipeline extracts raw data, harmonizes entries (with GPT), categorizes them, counts occurrences, and generates summaries. Both initial processing and incremental updates are supported.
-
-1. **Raw Extraction**
-   - Pull raw creative attributes from ad descriptions.
-   - Store ad-level data with timestamps.
-
-2. **Unique Attribute Extraction & Harmonization**
-   - **Initial Run**: Gather all raw entries for an attribute (e.g., Features). Use GPT or NLP to harmonize synonyms and create a unified list of unique features plus categories. Store them in the Brand Descriptions Table.
-   - **Incremental Updates**: Process only new ads. Check for any new features (or other attributes), expand lists, and regenerate categories and summaries as needed.
-
-3. **Counting & Summaries**
-   - Calculate how many ads match each unique feature or category.
-   - Generate GPT-based summaries explaining how a brand leverages its features, claims, offers, etc.
-
----
-
-### Competitor Brands Processing
-
-The same pipeline is repeated for competitor or follower brands. Each competitor may have a separate Brand Descriptions Table entry. Comparisons against the primary brand are handled in downstream modules.
-
----
-
-### GPT Feedback & Enhanced Pipeline Architecture
-
-**Strengths**
-- Comprehensive coverage of brand attributes
-- Hierarchical flow from raw extraction to summarized outputs
-- Incremental updates reduce redundant processing
-
-**Improvements**
-- **Batching & Caching**: Group entries before GPT calls and cache results
-- **Ambiguity Handling**: Allow fallback logic or human review for low-confidence mappings
-- **Version Control**: Track changes to the Brand Descriptions Table over time
-
-##  Additional Considerations
-
-###   Inspire Module & Unified Ad Tags
-- **Unified Ad Tags:**
-  - Ensure ad tags are consistent across brands.
-  - Consider universal tags for standardized labels across all brands, in addition to brand-specific tags.
-  
-- **Competitor Brand Mapping:**
-  - Define competitor brands in the context of a user’s primary brand.
-  - Map competitor features/claims to the customer’s taxonomy first, then create new taxonomies for unmatched entries.
-
-###   User-Defined Taxonomy and Data Management
-- **Central vs. Account-Specific Data:**
-  - Define which data is stored centrally (shared across accounts) and which is calculated per account.
-  
-- **Taxonomy Manager:**
-  - Calculated Uniques & Categories are written into the Taxonomy Manager.
-  - Users can override and lock in their taxonomy, ensuring user-defined labels are prioritized.
-  - This approach supports:
-    - Surfacing new tags for taxonomy management.
-    - Influencing pivot options in ad spend reporting.
-    - Catering to both agency pitches (using identified labels) and customer account reporting (using a mix of generated and user-defined taxonomy).
-
-## Brand Descriptions Pipeline
-
-- **Integrates GPT** for harmonizing language and generating narrative summaries.
-- **Supports Incremental Updates** to efficiently process new ad data.
-- **Provides Robust Error Handling** and quality assurance.
-- **Facilitates Downstream Modules** such as Brand Details, Inspire, and Ad Spend Reporting.
-- **Accommodates User-Defined Inputs** via a Taxonomy Manager for added flexibility.
-        
+The database is explicitly not discussed in this document.
