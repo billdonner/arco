@@ -22,7 +22,38 @@ Most of the data, such as brands and advertising assets, is shared by all custom
 
 Different non-UI components run on either EC2 or Lambda functions and are connected through a series of SQS queues. The SQS queues and Lambdas support parallelization of workflows for maximum concurrency.
 
----
+
+## Operating Environment
+
+Adology strives for near-continuous availability of its computing infrastructure, with each component able to fail independently and be restored within minutes. It is heavily dependent on AWS-managed services (MongoDB Atlas, Postgres RDS, SQS, AWS Load Balancer, AWS CloudFront).
+
+<img src="https://billdonner.com/adology/two.png" width=400>
+
+### Backend
+
+- **Amazon RDS for PostgreSQL**: Managed service handling administrative tasks (backups, patching, scaling, failover).
+- **MongoDB Atlas**: Fully managed cloud service for backups, scaling, replication, and maintenance.
+- **Amazon S3**: Data is automatically replicated for high durability.
+- **Amazon SQS**: Fully managed message queuing, used to decouple and scale pipeline components.
+- **EC2 Servers**: Initially, two EC2 instances are deployed behind a load balancer. One functions as the Adology API server, and the other remains a warm standby (or handles static content).
+- **Amazon API Gateway**: Serves as an interface between clients and backend services, enabling communication via WebSocket connections and message queues.
+- **AWS Elastic Load Balancer (ELB)**: Distributes traffic across multiple EC2 instances, automatically detecting and avoiding
+  unhealthy instances.
+- **Amazon Cloudwatch**: Monitors queue depths of SQS queues, S3, lambda performance, triggers.   PostgreSQL RDS has built-in CloudWatch metrics and enhanced monitoring.   MongoDB Atlas requires manual integration with CloudWatch via EventBridge. Both databases are monitored for query latency, CPU usage, memory, and disk I/O.
+
+### Frontend
+
+The main interface is a JavaScript application (the Adology UI) that serves as a Dashboard and communicates with the Adology API servers. Many API calls trigger long-running background Lambda functions, so WebSockets are used to notify the client when processing is complete. The UI then makes an additional API call to retrieve and display processed data.
+
+The Dashboard programs use the Amazon API Gateway to communicate with SQS and sends all HTTPS: requests to the Load Balancer for delivery to the Adology Web Server and Adology Application Server.
+
+Several Front End modules (Inquire, Enrich, AdSpend Reporting)follow this same pattern:
+
+- optionally setup a WebSocket for notifications
+- accept User Input from the Dashboard and post a Message on an SQS queue which triggers a long running operation on the backend.
+- poll for completion by checking the database or receive a notificaiton of completion by a WebSocket call
+- make an API call to receive the results that are now in the database
+
 
 ## Central Data Spine
 
@@ -33,7 +64,7 @@ The primary table in the central spine is the **Brand Descriptions Table**. Ther
 
 When a customer requests information about a brand, all videos and images previously captured by Adology become available, along with any new assets. The collection is then made accessible to the Analysis AI Engines.
 
-### Ad Descriptions/Attributes
+#### Ad Descriptions/Attributes
 
 These are natural language, open-ended text attributes mapped to an ad through AI processing. There are over 50 attributes for which the system generates descriptions. They are all open-ended and used for:
 
@@ -41,7 +72,7 @@ These are natural language, open-ended text attributes mapped to an ad through A
 - INSIGHT text summaries and chatbot (INQUIRE)
 - Inputs for trend detection
 
-### Detailed/Long Descriptions
+#### Detailed/Long Descriptions
 
 A single field is stored for each ad: a 500-word (max) description that captures comprehensive details.
 
@@ -51,13 +82,30 @@ A single field is stored for each ad: a 500-word (max) description that captures
 - Drive functionality in modules such as INSIGHT and TRACK
 - Serve as inputs for trend detection
 
-### Embeddings
+#### Embeddings
 
 Embeddings are numerical representations of creatives or text. Multiple types of embeddings are maintained:
 
 - **Text embeddings** of detailed descriptions, used to map images to insights in INSIGHT. This is done by aligning the embedding of INSIGHT text with detailed description embeddings to find the most relevant ad.
 - **Visual embeddings** of ads, used for trend detection.
 - Text embeddings of detailed descriptions are also used by the chatbot to retrieve relevant information.
+
+## Spine Operations
+
+Keeping the spine up to date is primarily driven by the Brand Record in the Brand Data Table.
+
+ 
+<img src=https://billdonner.com/adology/three.png width=800>
+
+Adology attempts to keep the spine as up to date as possible. As such there is a background process (SpineScheduler) which  periodically runs thru the entire table of brands sequentially and places messages on the low-priority Aquire SQS Q to trigger Lambda functions to update those brands needing an update. Some brands will be multi-sourced. In this case messages will be placed on multiple Acquire-like SQS QUeues to trigger different Lambdas for different processing.
+
+Adology administrators will pre-load popular and common brands so that they are already cached before anyone asks for them, but nevertheless there will be situations where a user at a dashboard requests a brand that has never been seen. In this case the general flow is the same but it is performed on a different set of higher-priority SQS Queues.
+
+In either case the Lambdas end up determining how to Acquire the content and then pass the flow to another set of SQS Queues to activate different Lambdas to  Download content from the remote sources and store in S3. The step can be done thru streaming so that there is no discrete upload step thus providing maximum concurrency with.
+
+Finally, in all cases there is considerable AI Intelligence applied to the newly downloaded content. This involves potentially many separate calls from Lambdas into the OpenAI API, which must be sequenced due to content dependecies.
+
+
 
 ---
 
@@ -70,59 +118,66 @@ Adology is designed not just as a database but as an intelligence engine. Storag
 The Adology Data Store is organized in a hierarchy of logical data stores that are continuously updated by the Adology Service Infrastructure:
 
  
-<img src=https://billdonner.com/adology/four.png width=400>
+<img src=https://billdonner.com/adology/four.png width=800>
  
-<img src=https://billdonner.com/adology/three.png width=400>
 
-#### Organization Account
-Represents a customer organization or business entity using Adology.
-Manages multiple brand-focussed workspaces (Brandspaces) where ad intelligence analysis is conducted.
-#### Brandspaces
-A user is connected to at least one Brandspace, and can switch brandspace.
-Each brandspace is centered around one primary brand, containting lists of competitors & followed brands, which dictate the scope of analysis.
-This level ensures customized tracking and insights for each brand strategy.
-#### Brand-Level Intelligence
-- Captures brand metadata, such as logos, category, website, and positioning summaries.
-- Brand descriptions are dynamically updated based on AI-generated insights.
-- Brands connect to multiple channels (e.g., Meta, SERP, YouTube) that serve as data sources.
-#### Channel-Level Tracking
-- Each brand runs ads across multiple channels, and each channel is treated as a separate data source.
-- Tracks where each ad originates, ensuring proper categorization and segmentation.
-#### Shared Brand Data Store
-- All Brand Data is from all sources is shared amongst all Adology users in S3.
-#### Shared Ads Data Store
-- Ads from all sources are accumulated permenently in S3, All Ads Data is shared amongst all Adology users
+1. **Organization Account**
+   Represents a customer organization or business entity using Adology. Manages multiple brand-focused workspaces (brandspaces).
+
+2. **Brandspaces**
+   Each user is connected to at least one brandspace and can switch brandspaces as needed. A brandspace is centered around a primary brand and includes competitor & followed brands, defining the scope of analysis.
+
+3. **Brand-Level Intelligence**
+   Includes brand metadata (logos, category, website) and AI-generated brand descriptions/trends. Each brand can connect to multiple channels (e.g., Meta, SERP, YouTube).
+
+4. **Channel-Level Tracking**
+   Each brand runs ads across multiple channels. Ads are categorized by their originating channel.
+
+5. **Shared Brand Data Store**
+   Brand data from all sources is stored in S3 and shared across all Adology users.
+
+6. **Shared Ads Data Store**
+   Ads from all sources are associated with a brand and accumulated permanently in S3, with data shared across all Adology users.
+
+---
 
 ## AI Summarization & Brand-Level Insights
 
-Once enough ad descriptions exist, they are aggregated into brand-wide insights. AI generates high-level summaries of key brand themes, messaging patterns, and performance insights, ensuring they remain up-to-date as new ads are processed.
+When sufficient ad descriptions are available, they are aggregated into brand-wide insights. AI generates high-level summaries of key brand themes, messaging patterns, and performance insights, which remain up-to-date as new ads are processed.
 
-### **Brand-Level AI Data (Aggregated from Ad-Level AI Data)**
-- **Theme Clusters** → Groups of ads that share common storytelling techniques.
-- **Attribute Summaries** → AI-generated analysis of features, claims, and offers.
-- **Messaging Trends** → AI-detected patterns in claims, benefits, and CTA effectiveness.
+### Brand-Level AI Data (Aggregated from Ad-Level AI Data)
+
+- **Theme Clusters**: Groups of ads sharing common storytelling techniques
+- **Attribute Summaries**: AI-generated analysis of features, claims, and offers
+- **Messaging Trends**: AI-detected patterns in claims, benefits, and CTA effectiveness
 
 ---
 
 ## Reports & Competitive Analysis
 
-Reports are generated and displayed in modules such as **Inspire Recs & Trends** and **Market Intelligence/Brand Details**. These reports synthesize AI-generated insights from both ad-level and brand-level data to provide customer-facing insights while reducing API costs.
+Reports are generated and displayed in modules such as **Inspire Recs & Trends** and **Market Intelligence/Brand Details**. These reports synthesize AI-generated insights from ad-level and brand-level data to provide client-facing information while reducing API costs.
 
-### **Report Generation Process**
-1. AI pre-generates reports at the end of the acquisition process based on competitor & follower lists.
+### Report Generation Process
+
+1. AI pre-generates reports at the end of the data acquisition process, based on competitor & follower lists.
 2. Reports include competitive benchmarking, creative trends, and strategic recommendations.
-3. **Example: Generating Ad Recommendations in INSPIRE**
-   - System pulls AI-generated ad & brand-level data for competitor & follower brands.
-   - Runs an Ad Recommendation prompt.
-   - Saves and displays recommendations in the **INSPIRE REC** module.
+3. **Example (Generating Ad Recommendations in INSPIRE):**
+   - The system pulls AI-generated ad & brand-level data for competitor & follower brands.
+   - An Ad Recommendation prompt is executed.
+   - Results are saved and displayed in the **INSPIRE REC** module.
 
-Reports update when **two** of the following occur:
-- A user adds/removes a follower or competitor brand.
+### Report Updates
+
+Reports are refreshed when two of the following occur:
+
+- A follower or competitor brand is added/removed.
 - A new ad arrives from a followed or competitor brand.
-- Additional logic: If **7 days have elapsed AND** new ads have been received.
+- Additional logic: If seven days have elapsed **and** new ads have been received.
 
-### **Stored Insights**
-Reports act as snapshots of key insights, optimizing cost efficiency by avoiding real-time recalculations. They include:
+### Stored Insights
+
+Reports act as snapshots of key insights, optimizing cost efficiency by avoiding real-time recalculations. Examples include:
+
 - **Ad Theme Comparisons** (e.g., *"Nike focuses on speed, while Adidas emphasizes lifestyle."*)
 - **Messaging Effectiveness Reports** (e.g., *"Top 3 CTAs in the running shoe market."*)
 - **Trend Tracking** (e.g., *"Limited-time offers are increasing in Meta ads."*)
@@ -131,332 +186,199 @@ Reports act as snapshots of key insights, optimizing cost efficiency by avoiding
 
 ## Brand Pipeline Optimizations
 
-### **Efficient Data Storage**
-- **Per-Ad Storage** → Ad descriptions, labels, and embeddings are saved per ad for fast retrieval.
-- **Incremental Brand-Level Updates** → Brand-wide insights update only when necessary, reducing redundant computation.
+1. **Efficient Data Storage**
+   - **Per-Ad Storage**: Ad descriptions, labels, and embeddings are stored per ad.
+   - **Incremental Brand-Level Updates**: Brand-wide insights are updated only when necessary.
 
-### **Caching & Performance Enhancements**
-- **Pre-built Reports & Dashboards** →
-  - Reduces OpenAI API calls and improves performance.
-  - Dashboard analytics are stored separately for fast loading times.
-  - Reports are driven by the **Competitor & Follower List**.
+2. **Caching & Performance Enhancements**
+   - **Pre-built Reports & Dashboards**: Reduces OpenAI API calls and improves performance.
+   - **Dashboard Analytics**: Stored separately for fast loading.
+   - **Competitor & Follower List**: Drives which reports need updates.
 
-### **Brandspaces Define Intelligence Scope**
-- **Brandspaces are managed at an organizational level** → Determines which brands & competitors are tracked.
-- **Organizational Brandspaces** → Ensure intelligence remains focused on the user’s needs.
-
-
-## Operating Environment
-
-Above All, Adology strives for  nearly continuous availability of its computing infrastructure. Every component can fail independently or together with restoral within minutes.
-
-Adology is deeply dependent upon AWS managed services for its operation, particularly Mongo DB Atlas, Postgres RDS,SQS, AWS Load Balancer, and AWS CloudFront.
+3. **Brandspaces Define Intelligence Scope**
+   - **Managed at an Organizational Level**: Determines brands & competitors to track.
+   - **Organizational Brandspaces**: Ensures intelligence remains focused on the requirements of each organization.
 
 
 
-<img src="https://billdonner.com/adology/two.png" width=400>
-
-### Backend 
-
-- Amazon RDS for PostgreSQL is a managed service, so AWS handles many administrative tasks like backups, software patching, automatic scaling, and failover
-
-- MongoDB Atlas is a fully managed cloud service. It automates backups, scaling, replication, and maintenance tasks
-
-- S3: Data stored in S3 is automatically replicated and highly durable.
-
-- SQS: Amazon SQS (Simple Queue Service) is a fully managed message queuing service. It is designed to decouple and scale distributed systems, microservices, and serverless applications. Adology makes heavy use of SQS queues to drive its multiple application pipelines
-
-- EC2 Servers: Initially we are deploying two EC2 hardware instances behind the load balancer, which will automatically distribute traffic and handle failover. When both machines are available only one will function as the Adology API Server; the other is running as a warm standby and can also potentially function as a webserver for static Adology content.
-
-- Amazon API Gateway: serves as an interface between clients  and backend services (such as AWS SQS). A client will establish a WebSocket connection with the Adology WebService and pass its connection ID thru calls to the API gateway to enqueue a message to Amazon SQS. When the Lambda function associated with the SQS completes it notifies the Adology WebService to pass the result back to the frontend client via a WebSocket
-
-- AWS Elastic Load Balancer (ELB): sits in front of an array of EC2 instances (at this point two), the application load balancer distributes both web page traffic (static content) and API requests (handled by a Python server) efficiently across multiple instances. It automatically detects unhealthy EC2 instances and stops sending traffic to them. **As long as at least one EC2 instance is running, the system remains operational.**
-
-
-
-### FrontEnd
-
-The main user interface is the Adology -  a javascript application that makes API calls to the Adology API server infrastructure. Since many API calls instantiate long-running background lambda functions, WebSockets are utilized to inform the client of operations completion. 
-
-Frontend api requests run thru the load balancer to the active API Server. A Websocket connection is established in advance of long running API calls to receive notifications of request completions. Upon such notification the frontend will Typically make another API call to gather a detailed response from the Adology data stores.
-
- 
-
-
+---
 
 ## The Main Acquisition Flow
 
-The main flow for acquiring brand information is the most time-consuming and time-critical part of the system, and a key performance metric is to process 10,000 ads in 10 minutes.
+A key performance metric is to process 10,000 ads in under 10 minutes. The overall process is:
 
-<img src=https://billdonner.com/adology/one.png width400>
+<img src="https://billdonner.com/adology/one.png" width=400>
 
-To kick off processing for a brand:
+1. A frontend dashboard program places a message on the **Apify** SQS queue with a **BrandName**.
+2. Multiple Apify processes handle this queue, using the Apify API to split the **BrandName** into a stream of URLs for specific images and videos.
+3. The stream of URL-based messages is placed on the **Acquire** SQS queue, triggering downloads to S3 in parallel.
+4. When each item is in S3, a new message (with S3 URL and metadata) is placed on the **Analyze** SQS queue.
+5. Analysis processes consume these messages and perform AI tasks in parallel, limited by the AI service’s capacity.
+6. All analyzed data is then stored in the database, and the frontend checks for completion or is notified via WebSockets.
 
-#### 1 - A frontend dashboard (JavaScript/TypeScript) program makes an API call that puts a message on the Apify SQS queue  
-Multiple Apify processes serve this queue to handle multiple brands in parallel. Each process uses the Apify API to transform the message containing a BrandName into a stream of messages with URLs for specific images and videos.
-
-#### 2 - The stream of URL-based messages is placed on the Acquire SQS queue  
-The Acquire queue triggers the download of one URL's content and streams it to S3 concurrently. After it's in S3, it puts another message—with the S3 URL and other data/meta-data—on the analysis queue. Many Acquire processes/Lambda functions are set to service the downloads and uploads in parallel.
-
-#### 3 - The stream of S3 URL-based messages is placed on the Analyze SQS queue  
-The Analyze SQS queue feeds a collection of analysis processes that perform all of the open AI work at whatever pace they can. They are all running potentially in parallel up to the limits of the AI itself.
-
-#### 4 - After analysis, everything rests in the database  
-The frontend dashboard will periodically check for the completion of brand analysis before displaying results to customers. A future release will use WebSockets to provide a dynamic display.
-
-#### 5 - Front-end programs access S3 directly, and Postgres + Mongo through the API  
-The dashboard, which in our scaling model might be running in hundreds of browsers simultaneously, never touches the database directly—only through the API. Programs can read the data on S3, but not change it.
+Adology’s dashboard accesses S3 directly and only writes to the database through the Adology API.
 
 ---
 
 ## Other Flows
 
-Most UX activity involves responding to a user's actions by invoking an Adology API call and awaiting results. These will be discussed in more detail in the Dashboard section.
-
-Each of the brands in the database is periodically updated by a periodic CRON job that places a message on the Apify or SerpApi SQS queues.
+Most UX functionality involves responding to user actions by calling an Adology API endpoint. Additional recurring processes (e.g., periodic CRON jobs) place messages on the Apify or SerpApi SQS queues to keep brand data updated.
 
 ---
-
 
 ## Appendices
 
 ### Common Themes & General Recommendations Across All Modules
 
 - **Coding Standards & Documentation**
-  - Enforce a consistent code style (PEP8) using linters (e.g., flake8, Black).
-  - Add comprehensive docstrings and inline comments for clarity and maintainability.
+  - A consistent code style (PEP8) is recommended, enforced by linters (e.g., flake8, Black).
+  - Comprehensive docstrings and inline comments should be included for clarity and maintainability.
 
 - **Centralized Configuration & Secrets Management**
-  - Externalize all hardcoded values (API keys, model names, S3 bucket names, etc.) into configuration files or environment variables.
-  - Use a secure secrets management solution (e.g., AWS Secrets Manager).
+  - All hardcoded values (API keys, model names, S3 bucket names) should be externalized in configuration files or environment variables.
+  - A secure secrets management solution (e.g., AWS Secrets Manager) is advised.
 
 - **Structured Logging & Monitoring**
-  - Replace all print statements with a structured logging framework that includes contextual data (user IDs, request IDs, timestamps).
-  - Integrate centralized logging and monitoring systems (e.g., ELK, CloudWatch) for better production observability.
+  - Print statements should be replaced with a structured logging framework that includes contextual data (user IDs, request IDs, timestamps).
+  - Centralized logging and monitoring systems (e.g., ELK, CloudWatch) improve production observability.
 
 - **Error Handling & Retry Logic**
-  - Use specific exception handling (e.g., catching JSONDecodeError, KeyError) rather than broad except blocks.
-  - Implement standardized retry mechanisms (e.g., using the tenacity library) for transient errors in external API and S3 interactions.
+  - Specific exception handling (e.g., JSONDecodeError, KeyError) should be used instead of broad `except` blocks.
+  - Standardized retry mechanisms (e.g., the tenacity library) are recommended for transient errors in external API/S3 interactions.
 
 - **Separation of Concerns & Modularity**
-  - Refactor code to separate business logic from I/O operations (e.g., decouple database, S3, and API integrations into dedicated service layers).
-  - Consolidate duplicated logic into shared modules and utilities.
+  - Code should be refactored to separate business logic from I/O operations (database, S3, external APIs).
+  - Duplicated logic can be consolidated into shared modules and utilities.
 
 - **Concurrency & Asynchronous I/O**
-  - Reevaluate thread pool sizes and consider adopting asynchronous I/O (using libraries like asyncio or aiohttp) for network-bound tasks.
-  - Ensure proper thread safety when sharing resources (e.g., cycling API clients).
+  - Thread pool sizes should be reevaluated, and asynchronous I/O (e.g., asyncio, aiohttp) considered for network-bound tasks.
+  - Proper thread safety is necessary when sharing resources.
 
 - **Testing & CI/CD**
-  - Increase test coverage with unit tests, integration tests, and end-to-end tests.
-  - Integrate static analysis, security scans, and dependency checks into the CI/CD pipeline.
+  - Test coverage should be expanded with unit, integration, and end-to-end tests.
+  - Static analysis, security scans, and dependency checks should be integrated into the CI/CD pipeline.
 
 - **External API Integration**
-  - Add input validation and robust error handling around external API calls.
-  - Use retries and fallback strategies to handle transient API failures.
+  - Input validation and robust error handling around external API calls are crucial.
+  - Retries and fallback strategies handle transient API failures effectively.
 
+---
 
 ### Best Practices for Writing Functions for Parallel Execution
 
-- **Statelessness:**  
-  Python functions do not depend on or modify shared state. If state is required, store it externally (e.g., in a database, S3) so that each function invocation is independent.
+- **Statelessness**
+  Functions should avoid depending on or modifying shared state. Any required state is preferably stored in a database or S3.
 
-- **Idempotency:**  
-  Multiple identical invocations produce the same result without causing unintended side effects. This is especially important for distributed systems and when implementing retry mechanisms.
+- **Idempotency**
+  Multiple identical invocations should produce the same result without unintended side effects. This approach supports safe retries and distributed workflows.
 
-- **Robust Error Handling:**  
-  Implement comprehensive error handling and logging. This is critical in parallel execution environments, as it helps with diagnosing issues and ensuring system reliability.
+- **Robust Error Handling**
+  Comprehensive error handling and logging greatly assist in diagnosing issues in parallel environments.
 
-- **Granularity:**  
-  Aim for small, well-defined functions that perform a single unit of work. Functions that are too large or complex can become harder to scale and manage in a parallel environment.
+- **Granularity**
+  Smaller, well-defined functions that perform a single unit of work scale and maintain more easily.
 
-- **Testing:**  
-  Test your functions both in isolation and within the parallel execution framework. This ensures that they behave as expected when running concurrently on EC2 or as AWS Lambda functions.
+- **Testing**
+  Functions should be tested in isolation and within the parallel execution framework to ensure correct behavior in concurrent scenarios.
+
 ---
 
 ### Amazon SQS
- Amazon SQS (Simple Queue Service) is a fully managed message queuing service. It is designed to decouple and scale distributed systems, microservices, and serverless applications.
- 
- - Fully managed:  Amazon SQS handles provisioning, maintenance, and scaling of the messaging infrastructure. Adology doesn’t need to manage servers, apply patches, or configure failover.
 
-- Scalability & Performance: SQS automatically scales to handle millions of messages per second.  No need to provision capacity in advance; it scales dynamically with demand.
+Amazon SQS (Simple Queue Service) is a fully managed message queuing service designed to decouple and scale distributed systems, microservices, and serverless applications:
 
-- Reliability & Availability: No need to set up your own replication or clustering.
+- **Fully Managed**: No server provisioning or failover configuration is required.
+- **Scalability & Performance**: SQS automatically scales to handle extremely high message throughput.
+- **Reliability & Availability**: Internal replication ensures message durability.
 
+---
 
-# More
+## Brand Descriptions Table Specification
 
-# Brand Descriptions Table Specification
+### Overview
 
-This section describes the design and processing steps for building a **Brand Descriptions Table**. The table summarizes each brand’s creative attributes (such as features, claims, benefits, offers, key messages, etc.) and supports downstream modules like Brand Details and Inspire. It is the key component of the Central Data Spine
+This section describes the design and processing steps for building a **Brand Descriptions Table**. The table summarizes each brand’s creative attributes (features, claims, benefits, offers, key messages, etc.) and supports downstream modules like Brand Details and Inspire. It is a key component of the Central Data Spine.
 
-##   Overview
+#### Primary User Personas
 
-###  Primary User Personas
-- **Backend Functions:** Data processing, analytics, and integration with downstream modules.
+- **Backend Functions**: Data processing, analytics, and integration with downstream modules.
 
-###   Jobs to Be Done
-- **Summarize Brand Attributes:** Provide a cohesive view of a brand’s features, claims, benefits, etc.
-- **Support Downstream Modules:** Supply standardized data for modules such as Brand Details, Inspire, and Ad Spend Reporting.
-- **Ensure Consistent Data Representation:** Harmonize attribute values across both primary and competitor brands.
+#### Jobs to Be Done
 
-##   Context and Functional Requirements
-  Purpose & Approach
-- **Functionality:** Similar to ad descriptions:
-  - One row per unique brand item.
-  - Attributes calculated to summarize themes, features, and benefits.
-- **Mapping:** Each attribute is derived from source fields in the ad description:
-  - **Features:** from `features`
-  - **Benefits:** from `benefits`
-  - **Claims:** from `claims`
-  - **Offers:** from `offers`
-  - **Themes:** from `Long Description`
-  - **Key Messages:** from `key message`
+- **Summarize Brand Attributes**: Provide a cohesive view of features, claims, benefits, etc.
+- **Support Downstream Modules**: Supply standardized data for Brand Details, Inspire, and Ad Spend Reporting.
+- **Ensure Consistent Data Representation**: Harmonize attribute values across both primary and competitor brands.
 
-###   Key Attributes
+---
 
-#### MVP Attributes
-- **Features**
-- **Benefits**
-- **Claims**
-- **Offers**
-- **Key Messages**
+### Context and Functional Requirements
 
-#### V2 Attributes
-- **Visual Styles**
-- **Emotions**
-- **Category Entry Points**
+**Purpose & Approach**
+- One row per unique brand item.
+- Each attribute is derived from source fields in the ad description:
+  - `features` → **Features**
+  - `benefits` → **Benefits**
+  - `claims` → **Claims**
+  - `offers` → **Offers**
+  - `Long Description` → **Themes**
+  - `key message` → **Key Messages**
 
-#### Information Types (Example: Claims)
-- **All Unique Claims**
-- **Categories of Claims**
-- **Summary of Claims:** Detailed description explaining the claims and their usage.
+#### Key Attributes
 
-## Data Processing Pipeline
+**MVP**
+- Features, Benefits, Claims, Offers, Key Messages
 
-The processing pipeline extracts raw data, harmonizes entries using GPT, categorizes them, counts occurrences, and generates summaries. It supports both initial processing and incremental updates.
+**V2**
+- Visual Styles, Emotions, Category Entry Points
 
-###   Raw Extraction
-- **Source Data:** Extract raw creative attributes from ad descriptions.
-- **Staging:** Store ad-level data with timestamps and source identifiers.
-- **Field Mapping:**  
-  - Features → `features`
-  - Benefits → `benefits`
-  - Claims → `claims`
-  - Offers → `offers`
-  - Themes → `Long Description`
-  - Key Messages → `key message`
+Each attribute may include a list of unique items, corresponding categories, and aggregated counts or summaries.
 
-###   Unique Attribute Extraction & Harmonization
+---
 
-####   Initial Run (First Time Processing)
-For each attribute (using **Features** as an example):
+### Data Processing Pipeline
 
-1. **Create Unique Features List**
-   - **Code:** Extract unique entries from the raw features column.
-   - **GPT:** Analyze and harmonize syntax to create an exhaustive list of unique features.
-   - **Storage:** Save the list of unique features in the Brand Descriptions Table.
-   - **Mapping:** Create a dictionary mapping raw entries to the unified unique features.
-   - **Labeling:** Apply these labels back to the original ad descriptions (new column) for counting.
+The pipeline extracts raw data, harmonizes entries (with GPT), categorizes them, counts occurrences, and generates summaries. Both initial processing and incremental updates are supported.
 
-2. **Create Feature Categories List**
-   - **GPT:** Analyze the unique features and generate corresponding feature categories.
-   - **Mapping:** Build a dictionary mapping each unique feature to a feature category.
-   - **Storage:** Save category mappings in both the Brand Descriptions Table and the Ad Descriptions Table (to allow counting by feature and category).
+1. **Raw Extraction**
+   - Pull raw creative attributes from ad descriptions.
+   - Store ad-level data with timestamps.
 
-3. **Count Ads for Each Feature and Category**
-   - **Code:** Count the number of ads matching each unique feature and category.
-   - **Storage:** Save counts and percentages in the Brand Descriptions Table.
+2. **Unique Attribute Extraction & Harmonization**
+   - **Initial Run**: Gather all raw entries for an attribute (e.g., Features). Use GPT or NLP to harmonize synonyms and create a unified list of unique features plus categories. Store them in the Brand Descriptions Table.
+   - **Incremental Updates**: Process only new ads. Check for any new features (or other attributes), expand lists, and regenerate categories and summaries as needed.
 
-4. **Generate Feature Summary Information**
-   - **Selection:** For each unique feature, select a sample (e.g., 5 ads).
-   - **GPT:** Generate a summary explaining how the brand leverages that feature, including ad counts and percentages.
-   - **Storage:** Save the generated summary in the Brand Descriptions Table.
+3. **Counting & Summaries**
+   - Calculate how many ads match each unique feature or category.
+   - Generate GPT-based summaries explaining how a brand leverages its features, claims, offers, etc.
 
-#### B. Incremental Updates (Subsequent Runs)
-When new ads are detected:
+---
 
-1. **Identify New Ads & Unique Features**
-   - **Code:** Extract unique feature entries from new ads.
-   - **Comparison:** Compare new entries with the existing unique features list.
-   - **Labeling:** Mark new entries as “New Features” and update older ones (older than 4 weeks) to “Not New.”
+### Competitor Brands Processing
 
-2. **Update Unique Features and Categories**
-   - **GPT:** Re-analyze the updated list to harmonize new entries.
-   - **Mapping:** Update the Brand Descriptions Table and apply labels to new ads.
-   - **Category Check:** Compare the updated unique features against existing categories and create new categories if necessary.
-   - **Storage:** Save updated mappings in both the Brand Descriptions Table and the Ad Descriptions Table.
+The same pipeline is repeated for competitor or follower brands. Each competitor may have a separate Brand Descriptions Table entry. Comparisons against the primary brand are handled in downstream modules.
 
-3. **Re-count Ads and Update Summaries**
-   - **Code:** Recalculate counts and percentages.
-   - **GPT:** Generate updated summaries for any new unique features.
-   - **Storage:** Update summary information in the Brand Descriptions Table.
+---
 
-###  Competitor Brands Processing
-- **Initial Run:** Use the primary brand’s unique features and category list as a baseline.
-- **Subsequent Runs:**  
-  - Follow the same incremental update process using the competitor’s dedicated unique features and categories list.
+### GPT Feedback & Enhanced Pipeline Architecture
 
-###   Data Hierarchy Summary
-- **Raw Extraction:** Stored at the ad level.
-- **Unified Uniques:** Stored at the brand level and applied as labels to ad-level data.
-- **Categories:** Stored at the brand level and used to label ad data for counting.
-- **Feature Summary:** Stored only at the brand level.
+**Strengths**
+- Comprehensive coverage of brand attributes
+- Hierarchical flow from raw extraction to summarized outputs
+- Incremental updates reduce redundant processing
 
-> **Note:** This pipeline is repeated for all creative attributes (e.g., benefits, claims, offers) except for themes, which follow a different process.
-
-##  GPT Feedback and Enhanced Pipeline Architecture
-
-###   Strengths of the Current Spec
-- **Comprehensive Coverage:** Clearly identifies key creative attributes and the necessary information types.
-- **Hierarchical Data Flow:** Logical progression from raw extraction to unified values, categorization, and summary generation.
-- **Effective GPT Integration:** Uses GPT for language harmonization, deduplication, and generating human-readable summaries.
-- **Incremental Update Strategy:** Processes new ads without reprocessing the entire dataset.
-
-
-
-#### Optimizing GPT Usage
-- **Batching and Caching:**  
-  - Process data in batches.
-  - Cache GPT outputs to reduce repeated calls.
-- **Hybrid Methods:**  
-  - Use traditional NLP techniques (e.g., clustering, similarity scoring) to pre-group entries before GPT processing.
-
-#### Handling Ambiguity
-- **Confidence & Ambiguity Handling:**  
-  - Define fallback processes or human review triggers for ambiguous or low-confidence mappings.
-
-#### Incremental Updates & Version Control
-- **Change Detection:**  
-  - Maintain timestamps and version tags for entries.
-- **Versioning:**  
-  - Implement version control to track changes over time in the Brand Descriptions Table.
-
-#### Error Handling and Quality Assurance
-- **Structured Logging:**  
-  - Implement robust error logging for each step (e.g., GPT call errors, JSON parsing issues).
-- **Validation Metrics:**  
-  - Establish metrics to assess the quality and consistency of outputs (e.g., category mappings, summary accuracy).
-
-#### Documentation & Visualization
-- **Diagrams & Schemas:**  
-  - Include data flow diagrams to illustrate the journey from raw extraction to final summaries.
-- **Field Mapping Documentation:**  
-  - Clearly document the mapping between source fields and target attributes.
-
-#### Scalability & Performance
-- **Parallel Processing:**  
-  - Optimize extraction and counting steps using parallel or distributed processing.
-- **Resource Management:**  
-  - Schedule resource-intensive tasks during off-peak hours to manage costs and performance.
+**Improvements**
+- **Batching & Caching**: Group entries before GPT calls and cache results
+- **Ambiguity Handling**: Allow fallback logic or human review for low-confidence mappings
+- **Version Control**: Track changes to the Brand Descriptions Table over time
 
 ##  Additional Considerations
 
 ###   Inspire Module & Unified Ad Tags
-- **Unified Ad Tags:**  
+- **Unified Ad Tags:**
   - Ensure ad tags are consistent across brands.
   - Consider universal tags for standardized labels across all brands, in addition to brand-specific tags.
   
-- **Competitor Brand Mapping:**  
+- **Competitor Brand Mapping:**
   - Define competitor brands in the context of a user’s primary brand.
   - Map competitor features/claims to the customer’s taxonomy first, then create new taxonomies for unmatched entries.
 
@@ -472,105 +394,11 @@ When new ads are detected:
     - Influencing pivot options in ad spend reporting.
     - Catering to both agency pitches (using identified labels) and customer account reporting (using a mix of generated and user-defined taxonomy).
 
-##  Summary
-
-This specification defines a comprehensive, modular, and scalable approach for creating and maintaining a **Brand Descriptions Table**. The proposed pipeline:
+## Brand Descriptions Pipeline
 
 - **Integrates GPT** for harmonizing language and generating narrative summaries.
 - **Supports Incremental Updates** to efficiently process new ad data.
 - **Provides Robust Error Handling** and quality assurance.
 - **Facilitates Downstream Modules** such as Brand Details, Inspire, and Ad Spend Reporting.
 - **Accommodates User-Defined Inputs** via a Taxonomy Manager for added flexibility.
-
-By following this architecture and the outlined improvements, the system will deliver consistent, high-quality brand summaries and scale effectively as new data and attributes are processed over time.
-
-## App Routes
-
-These are specific routes scattered throughout the code:
-
-```python
-@app.route('/api/dashboard')
-@app.route('/api/index')
-@app.route('/api/brand_suggestions', methods=['GET'])
-@app.route('/api/lists/create', methods=['POST'])
-# @app.route('/test', methods=['POST'])
-@app.route('/api/query', methods=['POST'])
-@app.route("/api/tasks/<task_id>", methods=["GET"])
-@app.route('/api/lists', methods=['GET'])
-@app.route('/api/lists/<list_item_id>', methods=['GET'])
-@app.route('/api/lists/update/<list_item_id>', methods=['PUT'])
-@app.route('/api/lists/remove/<list_item_id>', methods=['DELETE'])
-@app.route('/api/lists/add_brands/<list_item_id>', methods=['PATCH'])
-@app.route('/api/lists/remove_brand/<list_item_id>', methods=['DELETE'])
-@app.route('/api/process_brand_list', methods=['POST'])
-@app.route('/api/acquire/test', methods=['POST'])
-@app.route('/api/process_custom_prompt', methods=['POST'])
-@app.route('/api/list_status', methods=['GET'])
-@app.route('/api/get_acquisition_date', methods=['GET'])
-@app.route('/api/user/brands/export_all', methods=['GET'])
-@app.route('/api/user/brands/export_single', methods=['POST'])
-@app.route('/api/user/brands/view_all', methods=['GET'])
-@app.route('/api/user/brands/view_single', methods=['POST'])
-@app.route('/api/user/brands', methods=['GET'])
-@app.route('/api/user/list_or_acquire_brands', methods=['GET'])
-@app.route('/api/visualize_primary_brand', methods=['GET'])
-@app.route('/api/user/select_comparison_brands', methods=['POST'])
-@app.route('/api/user/visualize_comparison_brands', methods=['POST'])
-@app.route('/api/brand_report', methods=['GET'])
-@app.route('/api/brand_report_comparison', methods=['POST'])
-@app.route('/api/high_rated_images')
-@app.route('/send', methods=['POST'])
-@app.route('/', methods=['GET'])
-```
-These routes are generic - they represent a collection of endpoints and require parsing of detailed arguments by the application:
-```python
-app.register_blueprint(auth_bp, url_prefix='/')
-app.register_blueprint(chatbot_bp, url_prefix='/')
-app.register_blueprint(inspire_bp, url_prefix='/')
-app.register_blueprint(raw_footage_bp, url_prefix='/')
-app.register_blueprint(categories_bp, url_prefix='/')
-app.register_blueprint(acquire_bp, url_prefix='/')
-app.register_blueprint(enrich_bp, url_prefix='/')
-app.register_blueprint(brands_bp, url_prefix='/')
-```
----
-
-
-
-
-## Database
-
-The plan is to gradually migrate from Mongo to Postgres for performance reasons. Any data best served by Mongo (e.g., vector embeddings) will remain there.
-
-To facilitate this, a set of "shell functions" that hide the Postgres and Mongo specifics will be introduced into the codebase.
-
-
-#### Collections and Supported Operations
-
-- **brand_categories**: find_one, find
-- **brand_states**: find_one, update_one, delete_one
-- **chatbots**: find, find_one, insert_one
-- **conversation_chatbot_history**: find, insert_one, delete_one, delete_many
-- **conversation_history**: find, insert_one
-- **custom_reports**: count_documents, find, find_one, update_one, delete_one
-- **inspire_folders**: find, find_one, insert_one, update_one, delete_one
-- **inspire_folder_items**: count_documents, find, find_one, insert_one, delete_one
-- **inspire_subfolders**: find, find_one, insert_one, update_one, delete_one
-- **inspire_subfolder_items**: count_documents, find, find_one, insert_one, delete_one
-- **inspire_trends**: find_one, update_one
-- **list_auto_track**: find_one, update_one
-- **master_ads_meta**: count_documents, find, find_one, insert_one
-- **master_ads_metadata**: find
-- **master_ads_serp**: find_one, insert_one
-- **master_analysis_meta**: find_one, insert_one
-- **master_analysis_serp**: find_one, insert_one
-- **meta_ads_data**: find_one, insert_one
-- **meta_pages_info**: find_one, insert_one
-- **tasks**: find_one, insert_one, update_one, delete_many
-- **users**: find_one, insert_one, update_one
-- **vectors_embeddings**: find_one, insert_one, update_one
-
- 
-
----
----
+        
