@@ -1,4 +1,4 @@
-# Adology Architecture v0.81
+# Adology Architecture v0.82
 
 ## Overview
 
@@ -60,12 +60,13 @@ Several Front End modules (Inquire, Enrich, AdSpend Reporting)follow this same p
 
 # **Central Data Spine**
 
-The **Brand Descriptions Table** serves as the primary table in the central data spine. It contains two categories of brand entries:
+The **Brand Table** serves as the primary table in the central data spine. It contains two categories of brand entries:
 
 - **Analyzed Brands**: These brands are explicitly requested by customers and undergo full AI-driven analysis within Adology's processing engine.
 - **Tracked Brands**: These brands are selected by Adology for tracking purposes. They are stored in S3 but remain unanalyzed until explicitly requested by a customer. The AI processing, which is expensive, is explicitly deferred until a customer changes its status to "analyzed"
 
-The analysis of ads is a complex and time-consuming process and requires careful coordination to ensure a pleasant user experience.
+The **Ads Table** serves to accumulate ads(video,image,text,other)
+and their associated meta-data. The analysis of ads is a complex and time-consuming process and requires careful coordination by Adology to ensure a pleasant user experience.
 
 These are the fundamental data components that are tracked  by the Spine:
 
@@ -317,14 +318,19 @@ The `brand_id` is initially the Facebook Page ID of the brand.
 
 ### Ads Table
 
-| Field             | Data Type  | Description |
-|------------------|-----------|-------------|
-| `ad_id`         | UUID       | Unique identifier for the ad |
-| `brand_name`    | TEXT       | Foreign key linking to the Brands table (`name`) |
-| `content_url`   | TEXT       | URL pointing to the ad content |
-| `content_type`  | TEXT       | Type of content (e.g., image, video, text, carousel, story) |
-| `source`        | TEXT       | Platform where the ad was acquired (e.g., TikTok, Meta, Facebook) |
-| `acquisition_time` | TIMESTAMP | Timestamp of when the ad was acquired |
+| Field                 | Data Type  | Description |
+|----------------------|-----------|-------------|
+| `ad_id`             | UUID       | Unique identifier for the ad |
+| `brand_name`        | TEXT       | Foreign key linking to the Brands table (`name`) |
+| `content_url`       | TEXT       | URL pointing to the ad content |
+| `content_type`      | TEXT       | Type of content (e.g., image, video, text, carousel, story) |
+| `source`            | TEXT       | Platform where the ad was acquired (e.g., TikTok, Meta, Facebook) |
+| `acquisition_time`  | TIMESTAMP  | Timestamp of when the ad was acquired |
+| `attributes`        | TEXT       | Additional descriptive attributes for the ad |
+| `detailed_description` | TEXT    | More detailed textual description of the ad |
+| `labels`           | JSON       | Structured labels or tags associated with the ad |
+| `embeddings`       | BLOB       | Binary representation of vector embeddings for AI analysis |
+
 
 The **Ads Table** stores all acquired advertisements, including video, images, text, and other content linked to a brand. It maintains metadata about the source of the ad and when it was acquired, ensuring a structured way to track advertising content. The `brand_name` field acts as a foreign key, linking each ad to a specific brand, providing an easy lookup for all advertisements related to a given brand.
 
@@ -400,21 +406,25 @@ As objects (videos, images, text, etc) are initially acquired they are copied in
     "followed_by_customer": { "type": "Binary" },
     "analyzed_by_customer": { "type": "Binary" }
   },
-  
+
   "ads": {
     "ad_id": { "type": "UUID", "required": true },
     "brand_name": { "type": "String", "ref": "brands", "required": true },
     "content_url": { "type": "String", "required": true },
     "content_type": { "type": "String" },
     "source": { "type": "String", "enum": ["TikTok", "Meta", "Facebook", "Other"] },
-    "acquisition_time": { "type": "Date", "required": true }
+    "acquisition_time": { "type": "Date", "required": true },
+    "attributes": { "type": "String" },
+    "detailed_description": { "type": "String" },
+    "labels": { "type": "Object" },
+    "embeddings": { "type": "Binary" }
   },
-  
+
   "customers": {
     "name": { "type": "String", "unique": true, "required": true },
     "demographics": { "type": "Object" }
   },
-  
+
   "users": {
     "name": { "type": "String", "unique": true, "required": true },
     "customer_name": { "type": "String", "ref": "customers", "required": true },
@@ -422,7 +432,7 @@ As objects (videos, images, text, etc) are initially acquired they are copied in
     "current_workspace": { "type": "String", "ref": "workspaces" },
     "workspaces": { "type": "Array", "items": { "type": "String", "ref": "workspaces" } }
   },
-  
+
   "workspaces": {
     "name": { "type": "String", "unique": true, "required": true },
     "customer_name": { "type": "String", "ref": "customers", "required": true },
@@ -436,7 +446,6 @@ As objects (videos, images, text, etc) are initially acquired they are copied in
 ```
 
 ## Postgres Schema
-
 -- Brands Table
 CREATE TABLE brands (
     brand_id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
@@ -459,7 +468,11 @@ CREATE TABLE ads (
     content_url TEXT NOT NULL,
     content_type TEXT, -- Free text field for ad format classification
     source TEXT CHECK (source IN ('TikTok', 'Meta', 'Facebook', 'Other')),
-    acquisition_time TIMESTAMP NOT NULL
+    acquisition_time TIMESTAMP NOT NULL,
+    attributes TEXT, -- Additional descriptive attributes for the ad
+    detailed_description TEXT, -- More detailed textual description of the ad
+    labels JSONB, -- Structured labels or tags associated with the ad
+    embeddings BYTEA -- Binary representation of vector embeddings for AI analysis
 );
 
 -- Customers Table
@@ -487,7 +500,11 @@ CREATE TABLE workspaces (
     analyzed_brands JSONB -- Array of brand names
 );
 
-
+-- Indexes for Faster Queries
+CREATE INDEX idx_ads_brand_name ON ads(brand_name);
+CREATE INDEX idx_ads_source ON ads(source);
+CREATE INDEX idx_users_customer ON users(customer_name);
+CREATE INDEX idx_workspaces_customer ON workspaces(customer_name);
 
 ## Appendices
 
