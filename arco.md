@@ -436,6 +436,7 @@ As objects (videos, images, text, etc) are initially acquired they are copied in
 ```
 
 ## Postgres Schema
+
 -- Brands Table
 CREATE TABLE brands (
     brand_id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
@@ -485,7 +486,7 @@ CREATE TABLE workspaces (
     tracked_brands JSONB, -- Array of brand names
     analyzed_brands JSONB -- Array of brand names
 );
-```
+
 
 
 ## Appendices
